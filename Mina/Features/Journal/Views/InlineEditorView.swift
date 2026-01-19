@@ -35,18 +35,42 @@ struct InlineEditorView: View {
 
 // MARK: - Keyboard Accessory Bar
 // Toolbar that appears above the keyboard matching reference design:
-// [🔥 0 (pill)] [mic] [camera] [+] ... [keyboard dismiss]
+// Normal mode: [🔥 0 (pill)] [mic] [camera] [+] ... [keyboard dismiss]
+// Recording mode: [waveform] [checkmark] [x]
 
 struct KeyboardAccessoryBar: View {
     
     let streak: Int
+    let isRecording: Bool
+    let audioLevels: [CGFloat]
+    
     var onMicTap: () -> Void
     var onCameraTap: () -> Void
     var onAttachTap: () -> Void
     var onDismissTap: () -> Void
+    var onConfirmRecording: () -> Void
+    var onCancelRecording: () -> Void
     
     var body: some View {
         HStack(spacing: 12) {
+            if isRecording {
+                // Recording mode UI
+                recordingModeContent
+            } else {
+                // Normal mode UI
+                normalModeContent
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.minaCardSolid)
+        .animation(.easeInOut(duration: 0.2), value: isRecording)
+    }
+    
+    // MARK: - Normal Mode Content
+    
+    private var normalModeContent: some View {
+        Group {
             // Streak pill (elongated capsule)
             streakPill
             
@@ -72,9 +96,57 @@ struct KeyboardAccessoryBar: View {
                     .foregroundStyle(Color.minaSecondary)
             }
         }
+    }
+    
+    // MARK: - Recording Mode Content
+    
+    private var recordingModeContent: some View {
+        Group {
+            // Waveform visualizer in capsule
+            waveformCapsule
+            
+            // Confirm button (green checkmark)
+            Button(action: onConfirmRecording) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.minaSuccess)
+                    .frame(width: 44, height: 44)
+                    .background(Color.minaBackground)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(Color.minaSuccess.opacity(0.3), lineWidth: 1)
+                    )
+            }
+            
+            // Cancel button (red X)
+            Button(action: onCancelRecording) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.minaError)
+            }
+        }
+    }
+    
+    // MARK: - Waveform Capsule
+    
+    private var waveformCapsule: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<audioLevels.count, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.minaSecondary)
+                    .frame(width: 2, height: max(4, audioLevels[index] * 24))
+            }
+        }
+        .frame(height: 24)
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color.minaCardSolid)
+        .padding(.vertical, 10)
+        .background(Color.minaBackground)
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(Color.minaDivider, lineWidth: 1)
+        )
     }
     
     // MARK: - Streak Pill
@@ -120,69 +192,77 @@ struct KeyboardAccessoryBar: View {
     }
 }
 
-// MARK: - Keyboard Accessory Modifier
-// Attaches the accessory bar above the keyboard
+// MARK: - Waveform View (Standalone)
+// Can be used outside the accessory bar if needed
 
-struct KeyboardAccessoryModifier: ViewModifier {
+struct WaveformView: View {
+    let levels: [CGFloat]
+    let barColor: Color
+    let barWidth: CGFloat
+    let spacing: CGFloat
+    let maxHeight: CGFloat
     
-    let streak: Int
-    let isVisible: Bool
-    var onMicTap: () -> Void
-    var onCameraTap: () -> Void
-    var onAttachTap: () -> Void
-    var onDismissTap: () -> Void
-    
-    func body(content: Content) -> some View {
-        content
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    KeyboardAccessoryBar(
-                        streak: streak,
-                        onMicTap: onMicTap,
-                        onCameraTap: onCameraTap,
-                        onAttachTap: onAttachTap,
-                        onDismissTap: onDismissTap
-                    )
-                    .padding(.horizontal, -16) // Extend to edges
-                }
-            }
+    init(
+        levels: [CGFloat],
+        barColor: Color = .secondary,
+        barWidth: CGFloat = 2,
+        spacing: CGFloat = 2,
+        maxHeight: CGFloat = 24
+    ) {
+        self.levels = levels
+        self.barColor = barColor
+        self.barWidth = barWidth
+        self.spacing = spacing
+        self.maxHeight = maxHeight
     }
-}
-
-extension View {
-    func keyboardAccessory(
-        streak: Int,
-        isVisible: Bool,
-        onMicTap: @escaping () -> Void,
-        onCameraTap: @escaping () -> Void,
-        onAttachTap: @escaping () -> Void,
-        onDismissTap: @escaping () -> Void
-    ) -> some View {
-        modifier(
-            KeyboardAccessoryModifier(
-                streak: streak,
-                isVisible: isVisible,
-                onMicTap: onMicTap,
-                onCameraTap: onCameraTap,
-                onAttachTap: onAttachTap,
-                onDismissTap: onDismissTap
-            )
-        )
+    
+    var body: some View {
+        HStack(spacing: spacing) {
+            ForEach(0..<levels.count, id: \.self) { index in
+                RoundedRectangle(cornerRadius: barWidth / 2)
+                    .fill(barColor)
+                    .frame(width: barWidth, height: max(4, levels[index] * maxHeight))
+            }
+        }
+        .frame(height: maxHeight)
     }
 }
 
 // MARK: - Preview
 
-#Preview("Keyboard Accessory Bar") {
+#Preview("Normal Mode") {
     VStack {
         Spacer()
         
         KeyboardAccessoryBar(
             streak: 7,
+            isRecording: false,
+            audioLevels: [],
             onMicTap: {},
             onCameraTap: {},
             onAttachTap: {},
-            onDismissTap: {}
+            onDismissTap: {},
+            onConfirmRecording: {},
+            onCancelRecording: {}
+        )
+    }
+    .background(Color.minaBackground)
+}
+
+#Preview("Recording Mode") {
+    VStack {
+        Spacer()
+        
+        KeyboardAccessoryBar(
+            streak: 7,
+            isRecording: true,
+            audioLevels: (0..<30).map { _ in CGFloat.random(in: 0.2...1.0) },
+            onMicTap: {},
+            onCameraTap: {},
+            onAttachTap: {},
+            onDismissTap: {},
+            onConfirmRecording: {},
+            onCancelRecording: {}
         )
     }
     .background(Color.minaBackground)

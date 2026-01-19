@@ -99,10 +99,14 @@ struct JournalTabView: View {
             ToolbarItemGroup(placement: .keyboard) {
                 KeyboardAccessoryBar(
                     streak: store.streak,
+                    isRecording: store.isRecording,
+                    audioLevels: store.audioLevels,
                     onMicTap: { store.send(.micTapped) },
                     onCameraTap: { store.send(.cameraTapped) },
                     onAttachTap: { store.send(.attachTapped) },
-                    onDismissTap: { store.send(.dismissKeyboard) }
+                    onDismissTap: { store.send(.dismissKeyboard) },
+                    onConfirmRecording: { store.send(.confirmRecording) },
+                    onCancelRecording: { store.send(.cancelRecording) }
                 )
             }
         }
@@ -202,6 +206,22 @@ private struct LoadingView: View {
                 streak: 5,
                 isEditing: true,
                 editorFocused: true
+            )
+        ) {
+            JournalFeature()
+        }
+    )
+}
+
+#Preview("Recording Mode") {
+    JournalTabView(
+        store: Store(
+            initialState: JournalFeature.State(
+                streak: 5,
+                isEditing: true,
+                editorFocused: true,
+                isRecording: true,
+                audioLevels: (0..<30).map { _ in CGFloat.random(in: 0.2...1.0) }
             )
         ) {
             JournalFeature()

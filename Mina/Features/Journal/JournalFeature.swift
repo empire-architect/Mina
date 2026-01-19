@@ -8,6 +8,12 @@ import SwiftData
 @Reducer
 struct JournalFeature {
     
+    // MARK: - Cancel IDs
+    
+    enum CancelID: Hashable {
+        case recording
+    }
+    
     // MARK: - State
     
     @ObservableState
@@ -34,6 +40,11 @@ struct JournalFeature {
         
         /// Entry being edited (nil = new entry)
         var editingEntryId: UUID? = nil
+        
+        /// Voice recording state
+        var isRecording: Bool = false
+        var recordingDuration: TimeInterval = 0
+        var audioLevels: [CGFloat] = [] // For waveform visualization
         
         /// Child: Active input bar state
         var activeInput = ActiveInputFeature.State()
@@ -89,6 +100,15 @@ struct JournalFeature {
         case attachTapped
         case dismissKeyboard
         
+        // Voice recording actions
+        case startRecording
+        case stopRecording
+        case cancelRecording
+        case confirmRecording
+        case recordingTick
+        case audioLevelUpdated(CGFloat)
+        case transcriptionReceived(String)
+        
         // Child actions
         case entryDetail(PresentationAction<EntryEditorFeature.Action>)
         case activeInput(ActiveInputFeature.Action)
@@ -101,6 +121,7 @@ struct JournalFeature {
     
     @Dependency(\.databaseClient) var database
     @Dependency(\.dateClient) var dateClient
+    @Dependency(\.continuousClock) var clock
     
     // MARK: - Reducer
     
@@ -268,8 +289,8 @@ struct JournalFeature {
             // MARK: Keyboard Accessory Actions
                 
             case .micTapped:
-                // TODO: Start voice recording
-                return .none
+                // Start voice recording
+                return .send(.startRecording)
                 
             case .cameraTapped:
                 // TODO: Open camera
@@ -286,6 +307,79 @@ struct JournalFeature {
                 } else {
                     return .send(.saveEntry)
                 }
+                
+            // MARK: Voice Recording
+                
+            case .startRecording:
+                state.isRecording = true
+                state.recordingDuration = 0
+                state.audioLevels = []
+                // Generate initial random levels for visual effect
+                for _ in 0..<30 {
+                    state.audioLevels.append(CGFloat.random(in: 0.1...0.3))
+                }
+                // TODO: Start actual audio recording with AVAudioRecorder
+                return .run { send in
+                    // Simulate recording timer and audio levels
+                    for await _ in self.clock.timer(interval: .milliseconds(100)) {
+                        await send(.recordingTick)
+                        // Simulate audio level changes
+                        let level = CGFloat.random(in: 0.2...1.0)
+                        await send(.audioLevelUpdated(level))
+                    }
+                }
+                .cancellable(id: CancelID.recording, cancelInFlight: true)
+                
+            case .stopRecording:
+                state.isRecording = false
+                return .cancel(id: CancelID.recording)
+                
+            case .cancelRecording:
+                state.isRecording = false
+                state.recordingDuration = 0
+                state.audioLevels = []
+                return .cancel(id: CancelID.recording)
+                
+            case .confirmRecording:
+                // Stop recording and process
+                state.isRecording = false
+                let duration = state.recordingDuration
+                state.recordingDuration = 0
+                state.audioLevels = []
+                
+                // TODO: Process recording with speech-to-text
+                // For now, add a placeholder transcription
+                return .merge(
+                    .cancel(id: CancelID.recording),
+                    .run { send in
+                        // Simulate transcription delay
+                        try await self.clock.sleep(for: .milliseconds(500))
+                        // In real implementation, this would come from SFSpeechRecognizer
+                        let placeholder = "[Voice note - \(Int(duration))s]"
+                        await send(.transcriptionReceived(placeholder))
+                    }
+                )
+                
+            case .recordingTick:
+                state.recordingDuration += 0.1
+                return .none
+                
+            case let .audioLevelUpdated(level):
+                // Shift levels and add new one for waveform animation
+                if state.audioLevels.count >= 30 {
+                    state.audioLevels.removeFirst()
+                }
+                state.audioLevels.append(level)
+                return .none
+                
+            case let .transcriptionReceived(text):
+                // Append transcribed text to editor
+                if state.editorText.isEmpty {
+                    state.editorText = text
+                } else {
+                    state.editorText += " " + text
+                }
+                return .none
                 
             // MARK: Child Actions
                 
