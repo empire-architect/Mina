@@ -54,7 +54,9 @@ Mina/
 │   └── Attachment.swift
 ├── Services/
 │   ├── DatabaseClient.swift
-│   └── DateClient.swift
+│   ├── DateClient.swift
+│   ├── SpeechClient.swift
+│   └── CameraClient.swift
 └── Features/
     └── Journal/
         ├── JournalFeature.swift
@@ -67,6 +69,8 @@ Mina/
             ├── EmptyStateView.swift
             ├── FloatingInputBar.swift
             ├── EntryEditorSheet.swift
+            ├── InlineEditorView.swift
+            ├── CameraViews.swift
             └── ActiveInputBar.swift
 ```
 
@@ -187,9 +191,9 @@ Models use `@Model` macro for persistence:
 ## TODO / Future Work
 
 ### High Priority
-- [ ] Implement voice recording (SFSpeechRecognizer)
-- [ ] Implement camera capture
-- [ ] Implement document scanning (VisionKit)
+- [x] Implement voice recording (SFSpeechRecognizer)
+- [x] Implement camera capture
+- [x] Implement document scanning (VisionKit)
 - [ ] Connect AI service for title generation
 - [ ] Gallery tab implementation
 - [ ] Inbox tab implementation

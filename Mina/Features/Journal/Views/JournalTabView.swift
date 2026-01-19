@@ -1,5 +1,6 @@
 import SwiftUI
 import ComposableArchitecture
+import VisionKit
 
 // MARK: - Journal Tab View
 // Main container view for the Journal (Home) tab with inline editing
@@ -38,7 +39,33 @@ struct JournalTabView: View {
                     .padding(.bottom, 8)
                 }
             }
+            
+            // Camera options sheet
+            if store.showingCameraOptions {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        store.send(.hideCameraOptions)
+                    }
+                
+                VStack {
+                    Spacer()
+                    CameraActionSheet(
+                        isPresented: Binding(
+                            get: { store.showingCameraOptions },
+                            set: { if !$0 { store.send(.hideCameraOptions) } }
+                        ),
+                        onTakePhoto: { store.send(.takePhotoTapped) },
+                        onScanDocument: { store.send(.scanDocumentTapped) },
+                        isScannerAvailable: VNDocumentCameraViewController.isSupported
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.easeInOut(duration: 0.25), value: store.showingCameraOptions)
         .onAppear {
             store.send(.onAppear)
         }
@@ -50,6 +77,34 @@ struct JournalTabView: View {
         }
         .sheet(item: $store.scope(state: \.entryDetail, action: \.entryDetail)) { store in
             EntryEditorSheet(store: store)
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { store.showingCamera },
+            set: { if !$0 { store.send(.cameraCancelled) } }
+        )) {
+            CameraPickerView(
+                onCapture: { image in
+                    store.send(.photoCaptured(image))
+                },
+                onCancel: {
+                    store.send(.cameraCancelled)
+                }
+            )
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { store.showingDocumentScanner },
+            set: { if !$0 { store.send(.cameraCancelled) } }
+        )) {
+            DocumentScannerView(
+                onScan: { images in
+                    store.send(.documentScanned(images))
+                },
+                onCancel: {
+                    store.send(.cameraCancelled)
+                }
+            )
+            .ignoresSafeArea()
         }
     }
     
@@ -80,15 +135,22 @@ struct JournalTabView: View {
         VStack(spacing: 0) {
             // Text editor area
             ScrollView {
-                InlineEditorView(
-                    text: Binding(
-                        get: { store.editorText },
-                        set: { store.send(.editorTextChanged($0)) }
-                    ),
-                    placeholder: store.placeholderText,
-                    isFocused: $isEditorFocused
-                )
-                .frame(minHeight: 200)
+                VStack(spacing: 12) {
+                    InlineEditorView(
+                        text: Binding(
+                            get: { store.editorText },
+                            set: { store.send(.editorTextChanged($0)) }
+                        ),
+                        placeholder: store.placeholderText,
+                        isFocused: $isEditorFocused
+                    )
+                    .frame(minHeight: 150)
+                    
+                    // Pending attachments preview
+                    if !store.pendingAttachments.isEmpty {
+                        pendingAttachmentsView
+                    }
+                }
                 .padding(.top, 8)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -109,6 +171,32 @@ struct JournalTabView: View {
                     onConfirmRecording: { store.send(.confirmRecording) },
                     onCancelRecording: { store.send(.cancelRecording) }
                 )
+            }
+        }
+    }
+    
+    // MARK: - Pending Attachments View
+    
+    private var pendingAttachmentsView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Attachments")
+                .font(.minaCaption)
+                .foregroundStyle(Color.minaSecondary)
+                .padding(.horizontal, 16)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(store.pendingAttachments, id: \.id) { captured in
+                        PendingAttachmentThumbnail(
+                            imageData: captured.thumbnailData ?? captured.imageData,
+                            type: captured.type,
+                            onRemove: {
+                                store.send(.removePendingAttachment(captured.id))
+                            }
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
             }
         }
     }

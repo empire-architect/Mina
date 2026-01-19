@@ -2,6 +2,7 @@ import Foundation
 import ComposableArchitecture
 import SwiftData
 import Speech
+import UIKit
 
 // MARK: - Journal Feature
 // Parent reducer for the Journal (Home) tab with inline editing
@@ -69,6 +70,13 @@ struct JournalFeature {
         var liveTranscription: String = "" // Live transcription text
         var speechAuthorizationStatus: SpeechAuthorizationStatus = .notDetermined
         
+        /// Camera state
+        var showingCameraOptions: Bool = false
+        var showingCamera: Bool = false
+        var showingDocumentScanner: Bool = false
+        var cameraAuthorizationStatus: CameraAuthorizationStatus = .notDetermined
+        var pendingAttachments: [CapturedImage] = [] // Photos/scans to attach to current entry
+        
         /// Child: Active input bar state
         var activeInput = ActiveInputFeature.State()
         
@@ -135,6 +143,18 @@ struct JournalFeature {
         case speechAuthorizationResponse(SpeechAuthorizationStatus)
         case speechError(String)
         
+        // Camera actions
+        case showCameraOptions
+        case hideCameraOptions
+        case takePhotoTapped
+        case scanDocumentTapped
+        case cameraAuthorizationResponse(CameraAuthorizationStatus)
+        case photoCaptured(UIImage)
+        case documentScanned([UIImage])
+        case cameraCancelled
+        case cameraError(String)
+        case removePendingAttachment(UUID)
+        
         // Child actions
         case entryDetail(PresentationAction<EntryEditorFeature.Action>)
         case activeInput(ActiveInputFeature.Action)
@@ -149,6 +169,7 @@ struct JournalFeature {
     @Dependency(\.dateClient) var dateClient
     @Dependency(\.continuousClock) var clock
     @Dependency(\.speechClient) var speechClient
+    @Dependency(\.cameraClient) var cameraClient
     
     // MARK: - Reducer
     
@@ -260,12 +281,15 @@ struct JournalFeature {
                 state.editorText = ""
                 state.editingEntryId = nil
                 state.editorFocused = false
+                state.pendingAttachments = []
                 return .none
                 
             case .saveEntry:
                 let content = state.editorText.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !content.isEmpty else {
-                    // Empty entry, just cancel
+                let pendingImages = state.pendingAttachments
+                
+                guard !content.isEmpty || !pendingImages.isEmpty else {
+                    // Empty entry with no attachments, just cancel
                     return .send(.cancelEditing)
                 }
                 
@@ -276,11 +300,25 @@ struct JournalFeature {
                         if let existingId = entryId {
                             // Update existing entry
                             try await database.updateEntryContent(existingId, content)
+                            // TODO: Add attachments to existing entry
                         } else {
-                            // Create new entry
+                            // Create attachments from pending images
+                            var attachments: [JournalAttachment] = []
+                            for captured in pendingImages {
+                                let attachment = JournalAttachment(
+                                    type: captured.type == .photo ? .image : .scan,
+                                    data: captured.imageData,
+                                    thumbnailData: captured.thumbnailData,
+                                    mimeType: "image/jpeg"
+                                )
+                                attachments.append(attachment)
+                            }
+                            
+                            // Create new entry with attachments
                             let entry = JournalEntry(
                                 title: "",
-                                content: content
+                                content: content,
+                                attachments: attachments
                             )
                             try await database.saveEntry(entry)
                         }
@@ -296,6 +334,7 @@ struct JournalFeature {
                 state.editorText = ""
                 state.editingEntryId = nil
                 state.editorFocused = false
+                state.pendingAttachments = []
                 return .merge(
                     .send(.loadEntries),
                     .send(.loadStreak)
@@ -320,8 +359,8 @@ struct JournalFeature {
                 return .send(.startRecording)
                 
             case .cameraTapped:
-                // TODO: Open camera
-                return .none
+                // Show camera options (photo vs scan)
+                return .send(.showCameraOptions)
                 
             case .attachTapped:
                 // TODO: Show attachment options
@@ -470,6 +509,97 @@ struct JournalFeature {
                 } else {
                     state.editorText += " " + text
                 }
+                return .none
+                
+            // MARK: Camera Actions
+                
+            case .showCameraOptions:
+                state.showingCameraOptions = true
+                return .none
+                
+            case .hideCameraOptions:
+                state.showingCameraOptions = false
+                return .none
+                
+            case .takePhotoTapped:
+                state.showingCameraOptions = false
+                // Check authorization first
+                let status = cameraClient.authorizationStatus()
+                if status == .authorized {
+                    state.showingCamera = true
+                    return .none
+                } else if status == .notDetermined {
+                    return .run { send in
+                        let newStatus = await cameraClient.requestAuthorization()
+                        await send(.cameraAuthorizationResponse(newStatus))
+                    }
+                } else {
+                    state.errorMessage = "Camera access denied. Please enable in Settings."
+                    return .none
+                }
+                
+            case .scanDocumentTapped:
+                state.showingCameraOptions = false
+                guard cameraClient.isDocumentScannerAvailable() else {
+                    state.errorMessage = "Document scanner is not available on this device."
+                    return .none
+                }
+                // Check authorization first
+                let status = cameraClient.authorizationStatus()
+                if status == .authorized {
+                    state.showingDocumentScanner = true
+                    return .none
+                } else if status == .notDetermined {
+                    return .run { send in
+                        let newStatus = await cameraClient.requestAuthorization()
+                        await send(.cameraAuthorizationResponse(newStatus))
+                    }
+                } else {
+                    state.errorMessage = "Camera access denied. Please enable in Settings."
+                    return .none
+                }
+                
+            case let .cameraAuthorizationResponse(status):
+                state.cameraAuthorizationStatus = status
+                if status == .authorized {
+                    // Authorized, open camera (default to photo)
+                    state.showingCamera = true
+                } else {
+                    state.errorMessage = "Camera access denied. Please enable in Settings."
+                }
+                return .none
+                
+            case let .photoCaptured(image):
+                state.showingCamera = false
+                // Create captured image and add to pending attachments
+                if let captured = ImageUtilities.createCapturedImage(from: image, type: .photo) {
+                    state.pendingAttachments.append(captured)
+                }
+                return .none
+                
+            case let .documentScanned(images):
+                state.showingDocumentScanner = false
+                // Create captured images for each scanned page
+                for image in images {
+                    if let captured = ImageUtilities.createCapturedImage(from: image, type: .scan) {
+                        state.pendingAttachments.append(captured)
+                    }
+                }
+                return .none
+                
+            case .cameraCancelled:
+                state.showingCamera = false
+                state.showingDocumentScanner = false
+                return .none
+                
+            case let .cameraError(error):
+                state.showingCamera = false
+                state.showingDocumentScanner = false
+                state.errorMessage = error
+                return .none
+                
+            case let .removePendingAttachment(id):
+                state.pendingAttachments.removeAll { $0.id == id }
                 return .none
                 
             // MARK: Child Actions
