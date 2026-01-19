@@ -121,6 +121,14 @@ struct AppView: View {
             .tag(AppReducer.Tab.insights)
         }
         .tint(Color.minaAccent)
+        .fullScreenCover(
+            item: $store.scope(state: \.onboarding, action: \.onboarding)
+        ) { onboardingStore in
+            OnboardingContainerView(store: onboardingStore)
+        }
+        .onAppear {
+            store.send(.appDidLaunch)
+        }
     }
 }
 

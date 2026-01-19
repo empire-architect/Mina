@@ -11,6 +11,12 @@ struct AppReducer {
     
     @ObservableState
     struct State: Equatable {
+        /// Whether onboarding has been completed
+        var hasCompletedOnboarding: Bool = false
+        
+        /// Onboarding feature state (presented if not completed)
+        @Presents var onboarding: OnboardingFeature.State?
+        
         /// Currently selected tab
         var selectedTab: Tab = .journal
         
@@ -21,6 +27,18 @@ struct AppReducer {
         // var gallery = GalleryFeature.State()
         // var inbox = InboxFeature.State()
         // var insights = InsightsFeature.State()
+        
+        /// Initialize and check if onboarding is needed
+        init() {
+            // Check if user has completed onboarding
+            let hasCompleted = UserDefaults.standard.bool(forKey: "mina_onboarding_completed")
+            self.hasCompletedOnboarding = hasCompleted
+            
+            // Show onboarding if not completed
+            if !hasCompleted {
+                self.onboarding = OnboardingFeature.State()
+            }
+        }
     }
     
     // MARK: - Tabs
@@ -57,8 +75,16 @@ struct AppReducer {
     enum Action: BindableAction {
         case binding(BindingAction<State>)
         
+        /// App lifecycle
+        case appDidLaunch
+        
         /// Tab selection
         case tabSelected(Tab)
+        
+        /// Onboarding
+        case onboarding(PresentationAction<OnboardingFeature.Action>)
+        case showOnboarding
+        case onboardingCompleted
         
         /// Child actions
         case journal(JournalFeature.Action)
@@ -88,13 +114,44 @@ struct AppReducer {
             case .binding:
                 return .none
                 
+            case .appDidLaunch:
+                // Check if onboarding needed on launch
+                if !state.hasCompletedOnboarding && state.onboarding == nil {
+                    state.onboarding = OnboardingFeature.State()
+                }
+                return .none
+                
             case let .tabSelected(tab):
                 state.selectedTab = tab
+                return .none
+                
+            case .showOnboarding:
+                state.onboarding = OnboardingFeature.State()
+                return .none
+                
+            case .onboarding(.presented(.onboardingCompleted)):
+                // Mark onboarding as completed
+                UserDefaults.standard.set(true, forKey: "mina_onboarding_completed")
+                state.hasCompletedOnboarding = true
+                state.onboarding = nil
+                return .none
+                
+            case .onboarding:
+                return .none
+                
+            case .onboardingCompleted:
+                // Called after onboarding dismisses
+                UserDefaults.standard.set(true, forKey: "mina_onboarding_completed")
+                state.hasCompletedOnboarding = true
+                state.onboarding = nil
                 return .none
                 
             case .journal:
                 return .none
             }
+        }
+        .ifLet(\.$onboarding, action: \.onboarding) {
+            OnboardingFeature()
         }
     }
 }
