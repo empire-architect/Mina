@@ -1,6 +1,7 @@
 import Foundation
 import ComposableArchitecture
 import SwiftData
+import Speech
 
 // MARK: - Journal Feature
 // Parent reducer for the Journal (Home) tab with inline editing
@@ -12,6 +13,26 @@ struct JournalFeature {
     
     enum CancelID: Hashable {
         case recording
+        case transcription
+    }
+    
+    // MARK: - Speech Authorization Status
+    
+    enum SpeechAuthorizationStatus: Equatable {
+        case notDetermined
+        case denied
+        case restricted
+        case authorized
+        
+        init(from status: SFSpeechRecognizerAuthorizationStatus) {
+            switch status {
+            case .notDetermined: self = .notDetermined
+            case .denied: self = .denied
+            case .restricted: self = .restricted
+            case .authorized: self = .authorized
+            @unknown default: self = .notDetermined
+            }
+        }
     }
     
     // MARK: - State
@@ -45,6 +66,8 @@ struct JournalFeature {
         var isRecording: Bool = false
         var recordingDuration: TimeInterval = 0
         var audioLevels: [CGFloat] = [] // For waveform visualization
+        var liveTranscription: String = "" // Live transcription text
+        var speechAuthorizationStatus: SpeechAuthorizationStatus = .notDetermined
         
         /// Child: Active input bar state
         var activeInput = ActiveInputFeature.State()
@@ -108,6 +131,9 @@ struct JournalFeature {
         case recordingTick
         case audioLevelUpdated(CGFloat)
         case transcriptionReceived(String)
+        case liveTranscriptionUpdated(String, isFinal: Bool)
+        case speechAuthorizationResponse(SpeechAuthorizationStatus)
+        case speechError(String)
         
         // Child actions
         case entryDetail(PresentationAction<EntryEditorFeature.Action>)
@@ -122,6 +148,7 @@ struct JournalFeature {
     @Dependency(\.databaseClient) var database
     @Dependency(\.dateClient) var dateClient
     @Dependency(\.continuousClock) var clock
+    @Dependency(\.speechClient) var speechClient
     
     // MARK: - Reducer
     
@@ -314,49 +341,100 @@ struct JournalFeature {
                 state.isRecording = true
                 state.recordingDuration = 0
                 state.audioLevels = []
+                state.liveTranscription = ""
+                
                 // Generate initial random levels for visual effect
                 for _ in 0..<30 {
                     state.audioLevels.append(CGFloat.random(in: 0.1...0.3))
                 }
-                // TODO: Start actual audio recording with AVAudioRecorder
+                
                 return .run { send in
-                    // Simulate recording timer and audio levels
-                    for await _ in self.clock.timer(interval: .milliseconds(100)) {
-                        await send(.recordingTick)
-                        // Simulate audio level changes
-                        let level = CGFloat.random(in: 0.2...1.0)
-                        await send(.audioLevelUpdated(level))
-                    }
+                    // Request authorization first
+                    let status = await speechClient.requestAuthorization()
+                    await send(.speechAuthorizationResponse(SpeechAuthorizationStatus(from: status)))
                 }
-                .cancellable(id: CancelID.recording, cancelInFlight: true)
+                
+            case let .speechAuthorizationResponse(status):
+                state.speechAuthorizationStatus = status
+                
+                guard status == .authorized else {
+                    state.isRecording = false
+                    state.errorMessage = "Speech recognition not authorized. Please enable in Settings."
+                    return .none
+                }
+                
+                // Start actual transcription
+                return .merge(
+                    // Timer for duration and waveform
+                    .run { send in
+                        for await _ in self.clock.timer(interval: .milliseconds(100)) {
+                            await send(.recordingTick)
+                            // Get real audio level from speech client
+                            let level = CGFloat(speechClient.audioLevel())
+                            await send(.audioLevelUpdated(level))
+                        }
+                    }
+                    .cancellable(id: CancelID.recording, cancelInFlight: true),
+                    
+                    // Live transcription stream
+                    .run { send in
+                        do {
+                            let stream = try await speechClient.startTranscription()
+                            for await result in stream {
+                                await send(.liveTranscriptionUpdated(result.text, isFinal: result.isFinal))
+                            }
+                        } catch {
+                            await send(.speechError(error.localizedDescription))
+                        }
+                    }
+                    .cancellable(id: CancelID.transcription, cancelInFlight: true)
+                )
                 
             case .stopRecording:
                 state.isRecording = false
-                return .cancel(id: CancelID.recording)
+                return .merge(
+                    .cancel(id: CancelID.recording),
+                    .cancel(id: CancelID.transcription),
+                    .run { _ in
+                        await speechClient.stopTranscription()
+                    }
+                )
                 
             case .cancelRecording:
                 state.isRecording = false
                 state.recordingDuration = 0
                 state.audioLevels = []
-                return .cancel(id: CancelID.recording)
-                
-            case .confirmRecording:
-                // Stop recording and process
-                state.isRecording = false
-                let duration = state.recordingDuration
-                state.recordingDuration = 0
-                state.audioLevels = []
-                
-                // TODO: Process recording with speech-to-text
-                // For now, add a placeholder transcription
+                state.liveTranscription = ""
                 return .merge(
                     .cancel(id: CancelID.recording),
-                    .run { send in
-                        // Simulate transcription delay
-                        try await self.clock.sleep(for: .milliseconds(500))
-                        // In real implementation, this would come from SFSpeechRecognizer
-                        let placeholder = "[Voice note - \(Int(duration))s]"
-                        await send(.transcriptionReceived(placeholder))
+                    .cancel(id: CancelID.transcription),
+                    .run { _ in
+                        await speechClient.stopTranscription()
+                    }
+                )
+                
+            case .confirmRecording:
+                // Stop recording and insert transcription
+                let transcribedText = state.liveTranscription
+                state.isRecording = false
+                state.recordingDuration = 0
+                state.audioLevels = []
+                state.liveTranscription = ""
+                
+                // Insert transcribed text into editor
+                if !transcribedText.isEmpty {
+                    if state.editorText.isEmpty {
+                        state.editorText = transcribedText
+                    } else {
+                        state.editorText += " " + transcribedText
+                    }
+                }
+                
+                return .merge(
+                    .cancel(id: CancelID.recording),
+                    .cancel(id: CancelID.transcription),
+                    .run { _ in
+                        await speechClient.stopTranscription()
                     }
                 )
                 
@@ -372,8 +450,21 @@ struct JournalFeature {
                 state.audioLevels.append(level)
                 return .none
                 
+            case let .liveTranscriptionUpdated(text, isFinal):
+                state.liveTranscription = text
+                // If final, we could auto-confirm or just wait for user
+                return .none
+                
+            case let .speechError(error):
+                state.isRecording = false
+                state.errorMessage = error
+                return .merge(
+                    .cancel(id: CancelID.recording),
+                    .cancel(id: CancelID.transcription)
+                )
+                
             case let .transcriptionReceived(text):
-                // Append transcribed text to editor
+                // Legacy - kept for compatibility
                 if state.editorText.isEmpty {
                     state.editorText = text
                 } else {

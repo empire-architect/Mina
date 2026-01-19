@@ -101,6 +101,7 @@ struct JournalTabView: View {
                     streak: store.streak,
                     isRecording: store.isRecording,
                     audioLevels: store.audioLevels,
+                    liveTranscription: store.liveTranscription,
                     onMicTap: { store.send(.micTapped) },
                     onCameraTap: { store.send(.cameraTapped) },
                     onAttachTap: { store.send(.attachTapped) },

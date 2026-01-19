@@ -70,7 +70,35 @@ Mina/
             └── ActiveInputBar.swift
 ```
 
-### 4. Configure Assets
+### 4. Configure Info.plist Permissions
+
+Add these keys to your Info.plist for speech recognition and microphone access:
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>Mina needs microphone access to transcribe your voice notes into journal entries.</string>
+
+<key>NSSpeechRecognitionUsageDescription</key>
+<string>Mina uses speech recognition to convert your voice into text for journaling.</string>
+
+<key>NSCameraUsageDescription</key>
+<string>Mina needs camera access to capture photos for your journal entries.</string>
+
+<key>NSPhotoLibraryUsageDescription</key>
+<string>Mina needs photo library access to attach images to your journal entries.</string>
+```
+
+Or in Xcode:
+1. Select your project in the navigator
+2. Select the **Mina** target
+3. Go to **Info** tab
+4. Add the following keys:
+   - `Privacy - Microphone Usage Description`
+   - `Privacy - Speech Recognition Usage Description`
+   - `Privacy - Camera Usage Description`
+   - `Privacy - Photo Library Usage Description`
+
+### 5. Configure Assets
 
 Create the following color sets in `Assets.xcassets`:
 
@@ -82,13 +110,13 @@ Create the following color sets in `Assets.xcassets`:
 | `AppSecondary` | `#8E8E93` | Secondary text |
 | `AppAccent` | `#FF6B35` | Accent/streak color |
 
-### 5. Delete Generated Files
+### 6. Delete Generated Files
 
 Remove these auto-generated files (we replace them):
 - `ContentView.swift`
 - Original `MinaApp.swift`
 
-### 6. Build & Run
+### 7. Build & Run
 
 1. Select an iOS 17+ simulator or device
 2. Press **⌘R** to build and run

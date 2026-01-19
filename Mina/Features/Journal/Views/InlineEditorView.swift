@@ -43,6 +43,7 @@ struct KeyboardAccessoryBar: View {
     let streak: Int
     let isRecording: Bool
     let audioLevels: [CGFloat]
+    let liveTranscription: String
     
     var onMicTap: () -> Void
     var onCameraTap: () -> Void
@@ -52,19 +53,51 @@ struct KeyboardAccessoryBar: View {
     var onCancelRecording: () -> Void
     
     var body: some View {
-        HStack(spacing: 12) {
-            if isRecording {
-                // Recording mode UI
-                recordingModeContent
-            } else {
-                // Normal mode UI
-                normalModeContent
+        VStack(spacing: 0) {
+            // Live transcription preview (shown while recording)
+            if isRecording && !liveTranscription.isEmpty {
+                transcriptionPreview
             }
+            
+            // Main accessory bar
+            HStack(spacing: 12) {
+                if isRecording {
+                    // Recording mode UI
+                    recordingModeContent
+                } else {
+                    // Normal mode UI
+                    normalModeContent
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.minaCardSolid)
+        }
+        .animation(.easeInOut(duration: 0.2), value: isRecording)
+        .animation(.easeInOut(duration: 0.15), value: liveTranscription)
+    }
+    
+    // MARK: - Transcription Preview
+    
+    private var transcriptionPreview: some View {
+        HStack {
+            Text(liveTranscription)
+                .font(.minaBody)
+                .foregroundStyle(Color.minaSecondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            
+            Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color.minaCardSolid)
-        .animation(.easeInOut(duration: 0.2), value: isRecording)
+        .background(Color.minaBackground)
+        .overlay(
+            Rectangle()
+                .fill(Color.minaDivider)
+                .frame(height: 1),
+            alignment: .bottom
+        )
     }
     
     // MARK: - Normal Mode Content
@@ -238,6 +271,7 @@ struct WaveformView: View {
             streak: 7,
             isRecording: false,
             audioLevels: [],
+            liveTranscription: "",
             onMicTap: {},
             onCameraTap: {},
             onAttachTap: {},
@@ -257,6 +291,7 @@ struct WaveformView: View {
             streak: 7,
             isRecording: true,
             audioLevels: (0..<30).map { _ in CGFloat.random(in: 0.2...1.0) },
+            liveTranscription: "Hello, this is a test of speech recognition...",
             onMicTap: {},
             onCameraTap: {},
             onAttachTap: {},
