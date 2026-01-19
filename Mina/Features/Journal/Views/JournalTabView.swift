@@ -2,12 +2,12 @@ import SwiftUI
 import ComposableArchitecture
 
 // MARK: - Journal Tab View
-// Main container view for the Journal (Home) tab
-// Matches the reference design: warm cream background, minimalist aesthetic
+// Main container view for the Journal (Home) tab with inline editing
 
 struct JournalTabView: View {
     
     @Bindable var store: StoreOf<JournalFeature>
+    @FocusState private var isEditorFocused: Bool
     
     var body: some View {
         ZStack {
@@ -16,43 +16,95 @@ struct JournalTabView: View {
                 .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Header
+                // Header (always visible)
                 JournalHeaderView(
                     streak: store.streak,
                     onLogoTap: { store.send(.scrollToTopTapped) },
                     onSettingsTap: { store.send(.settingsTapped) }
                 )
                 
-                // Content
-                if store.isLoading && store.entries.isEmpty {
-                    LoadingView()
-                } else if store.entries.isEmpty {
-                    EmptyStateView {
-                        store.send(.newEntryTapped)
-                    }
-                } else {
-                    EntryListView(store: store)
-                }
+                // Content area
+                contentView
             }
             
-            // Floating Input Bar
-            VStack {
-                Spacer()
-                FloatingInputBar {
-                    store.send(.newEntryTapped)
+            // Floating Input Bar (hidden when editing)
+            if !store.isEditing {
+                VStack {
+                    Spacer()
+                    FloatingInputBar {
+                        store.send(.startEditing)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
             }
         }
         .onAppear {
             store.send(.onAppear)
         }
-        .sheet(item: $store.scope(state: \.editor, action: \.editor)) { store in
-            EntryEditorSheet(store: store)
+        .onChange(of: isEditorFocused) { _, newValue in
+            store.send(.setEditorFocus(newValue))
+        }
+        .onChange(of: store.editorFocused) { _, newValue in
+            isEditorFocused = newValue
         }
         .sheet(item: $store.scope(state: \.entryDetail, action: \.entryDetail)) { store in
             EntryEditorSheet(store: store)
+        }
+    }
+    
+    // MARK: - Content View
+    
+    @ViewBuilder
+    private var contentView: some View {
+        if store.isEditing {
+            // Inline editor mode
+            inlineEditorContent
+        } else if store.isLoading && store.entries.isEmpty {
+            // Loading state
+            LoadingView()
+        } else if store.entries.isEmpty {
+            // Empty state - tappable to start editing
+            EmptyStateView {
+                store.send(.startEditing)
+            }
+        } else {
+            // Entry list
+            EntryListView(store: store)
+        }
+    }
+    
+    // MARK: - Inline Editor Content
+    
+    private var inlineEditorContent: some View {
+        VStack(spacing: 0) {
+            // Text editor area
+            ScrollView {
+                InlineEditorView(
+                    text: Binding(
+                        get: { store.editorText },
+                        set: { store.send(.editorTextChanged($0)) }
+                    ),
+                    placeholder: store.placeholderText,
+                    isFocused: $isEditorFocused
+                )
+                .frame(minHeight: 200)
+                .padding(.top, 8)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            
+            Spacer()
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                KeyboardAccessoryBar(
+                    streak: store.streak,
+                    onMicTap: { store.send(.micTapped) },
+                    onCameraTap: { store.send(.cameraTapped) },
+                    onAttachTap: { store.send(.attachTapped) },
+                    onDismissTap: { store.send(.dismissKeyboard) }
+                )
+            }
         }
     }
 }
@@ -137,6 +189,20 @@ private struct LoadingView: View {
     JournalTabView(
         store: Store(
             initialState: JournalFeature.State()
+        ) {
+            JournalFeature()
+        }
+    )
+}
+
+#Preview("Editing Mode") {
+    JournalTabView(
+        store: Store(
+            initialState: JournalFeature.State(
+                streak: 5,
+                isEditing: true,
+                editorFocused: true
+            )
         ) {
             JournalFeature()
         }

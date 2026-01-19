@@ -24,6 +24,12 @@ struct DatabaseClient {
     /// Create a new entry
     var createEntry: @Sendable (JournalEntry) async throws -> Void
     
+    /// Save a new entry (alias for createEntry)
+    var saveEntry: @Sendable (JournalEntry) async throws -> Void
+    
+    /// Update an existing entry by ID with new content
+    var updateEntryContent: @Sendable (UUID, String) async throws -> Void
+    
     /// Update an existing entry
     var updateEntry: @Sendable (JournalEntry) async throws -> Void
     
@@ -153,6 +159,28 @@ extension DatabaseClient {
             let context = await DatabaseClient.modelContainer.mainContext
             context.insert(entry)
             try context.save()
+        },
+        
+        saveEntry: { entry in
+            let context = await DatabaseClient.modelContainer.mainContext
+            context.insert(entry)
+            try context.save()
+        },
+        
+        updateEntryContent: { id, content in
+            let context = await DatabaseClient.modelContainer.mainContext
+            
+            let predicate = #Predicate<JournalEntry> { entry in
+                entry.id == id
+            }
+            
+            let descriptor = FetchDescriptor<JournalEntry>(predicate: predicate)
+            
+            if let entry = try context.fetch(descriptor).first {
+                entry.content = content
+                entry.updatedAt = Date()
+                try context.save()
+            }
         },
         
         updateEntry: { entry in
@@ -302,6 +330,8 @@ extension DatabaseClient {
             return JournalEntry.sample
         },
         createEntry: { _ in },
+        saveEntry: { _ in },
+        updateEntryContent: { _, _ in },
         updateEntry: { _ in },
         deleteEntry: { _ in },
         calculateStreak: { 7 },

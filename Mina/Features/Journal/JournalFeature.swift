@@ -3,7 +3,7 @@ import ComposableArchitecture
 import SwiftData
 
 // MARK: - Journal Feature
-// Parent reducer for the Journal (Home) tab
+// Parent reducer for the Journal (Home) tab with inline editing
 
 @Reducer
 struct JournalFeature {
@@ -27,14 +27,29 @@ struct JournalFeature {
         /// Scroll to top trigger
         var scrollToTopTrigger: Int = 0
         
-        /// Child: Entry editor sheet
-        @Presents var editor: EntryEditorFeature.State?
+        /// Inline editing state
+        var isEditing: Bool = false
+        var editorText: String = ""
+        var editorFocused: Bool = false
         
-        /// Child: Active input bar
+        /// Entry being edited (nil = new entry)
+        var editingEntryId: UUID? = nil
+        
+        /// Child: Active input bar state
         var activeInput = ActiveInputFeature.State()
         
-        /// Child: Entry detail (for viewing/editing existing)
+        /// Child: Entry detail (for viewing/editing existing from list)
         @Presents var entryDetail: EntryEditorFeature.State?
+        
+        /// Whether the user is actively typing
+        var isTyping: Bool {
+            isEditing && editorFocused
+        }
+        
+        /// Placeholder text
+        var placeholderText: String {
+            "Start writing your thoughts..."
+        }
     }
     
     // MARK: - Actions
@@ -59,12 +74,27 @@ struct JournalFeature {
         case entryDeleted
         case scrollToTopTapped
         case settingsTapped
-        case newEntryTapped
+        
+        // Inline editing
+        case startEditing
+        case cancelEditing
+        case saveEntry
+        case entrySaved
+        case editorTextChanged(String)
+        case setEditorFocus(Bool)
+        
+        // Keyboard accessory actions
+        case micTapped
+        case cameraTapped
+        case attachTapped
+        case dismissKeyboard
         
         // Child actions
-        case editor(PresentationAction<EntryEditorFeature.Action>)
         case entryDetail(PresentationAction<EntryEditorFeature.Action>)
         case activeInput(ActiveInputFeature.Action)
+        
+        // Legacy (for compatibility)
+        case newEntryTapped
     }
     
     // MARK: - Dependencies
@@ -123,7 +153,6 @@ struct JournalFeature {
                         let streak = try await database.calculateStreak()
                         await send(.streakLoaded(streak))
                     } catch {
-                        // Streak calculation failed, default to 0
                         await send(.streakLoaded(0))
                     }
                 }
@@ -169,25 +198,96 @@ struct JournalFeature {
                 // TODO: Navigate to settings
                 return .none
                 
-            case .newEntryTapped:
-                state.editor = EntryEditorFeature.State(mode: .creating)
+            // MARK: Inline Editing
+                
+            case .startEditing, .newEntryTapped:
+                state.isEditing = true
+                state.editorText = ""
+                state.editingEntryId = nil
+                state.editorFocused = true
                 return .none
                 
-            // MARK: Child Actions
+            case .cancelEditing:
+                state.isEditing = false
+                state.editorText = ""
+                state.editingEntryId = nil
+                state.editorFocused = false
+                return .none
                 
-            case .editor(.presented(.saveCompleted)):
-                state.editor = nil
+            case .saveEntry:
+                let content = state.editorText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !content.isEmpty else {
+                    // Empty entry, just cancel
+                    return .send(.cancelEditing)
+                }
+                
+                let entryId = state.editingEntryId
+                
+                return .run { send in
+                    do {
+                        if let existingId = entryId {
+                            // Update existing entry
+                            try await database.updateEntryContent(existingId, content)
+                        } else {
+                            // Create new entry
+                            let entry = JournalEntry(
+                                title: "",
+                                content: content
+                            )
+                            try await database.saveEntry(entry)
+                        }
+                        await send(.entrySaved)
+                    } catch {
+                        // Handle error
+                        await send(.loadFailed(error.localizedDescription))
+                    }
+                }
+                
+            case .entrySaved:
+                state.isEditing = false
+                state.editorText = ""
+                state.editingEntryId = nil
+                state.editorFocused = false
                 return .merge(
                     .send(.loadEntries),
                     .send(.loadStreak)
                 )
                 
-            case .editor(.presented(.cancelTapped)):
-                state.editor = nil
+            case let .editorTextChanged(text):
+                state.editorText = text
                 return .none
                 
-            case .editor:
+            case let .setEditorFocus(focused):
+                state.editorFocused = focused
+                if !focused && state.editorText.isEmpty {
+                    // Lost focus with empty text, cancel editing
+                    state.isEditing = false
+                }
                 return .none
+                
+            // MARK: Keyboard Accessory Actions
+                
+            case .micTapped:
+                // TODO: Start voice recording
+                return .none
+                
+            case .cameraTapped:
+                // TODO: Open camera
+                return .none
+                
+            case .attachTapped:
+                // TODO: Show attachment options
+                return .none
+                
+            case .dismissKeyboard:
+                // Save if there's content, otherwise cancel
+                if state.editorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return .send(.cancelEditing)
+                } else {
+                    return .send(.saveEntry)
+                }
+                
+            // MARK: Child Actions
                 
             case .entryDetail(.presented(.saveCompleted)):
                 state.entryDetail = nil
@@ -201,15 +301,11 @@ struct JournalFeature {
                 return .none
                 
             case .activeInput(.startNewEntry):
-                state.editor = EntryEditorFeature.State(mode: .creating)
-                return .none
+                return .send(.startEditing)
                 
             case .activeInput:
                 return .none
             }
-        }
-        .ifLet(\.$editor, action: \.editor) {
-            EntryEditorFeature()
         }
         .ifLet(\.$entryDetail, action: \.entryDetail) {
             EntryEditorFeature()
